@@ -25,15 +25,12 @@ importers:
       ipaddr.js:
         specifier: ^2.3.0
         version: 2.3.0
-      playwright:
+      patchright:
         specifier: ^1.64.1
         version: 1.64.1
       proxy-chain:
         specifier: ^2.7.1
         version: 2.7.1
-      user-agents:
-        specifier: ^1.1.669
-        version: 1.1.669
     devDependencies:
       '@types/express':
         specifier: ^5.0.6
@@ -41,9 +38,6 @@ importers:
       '@types/node':
         specifier: ^22.15.30
         version: 22.19.8
-      '@types/user-agents':
-        specifier: ^1.0.4
-        version: 1.0.4
       tsx:
         specifier: ^4.21.0
         version: 4.21.0
@@ -242,9 +236,6 @@ packages:
   '@types/serve-static@2.2.0':
     resolution: {integrity: sha512-8mam4H1NHLtu7nmtalF7eyBH14QyOASmcxHhSfEoRyr0nP/YdoesEtU+uSRvMe96TW/HPTtkoKqQLl53N7UXMQ==}
 
-  '@types/user-agents@1.0.4':
-    resolution: {integrity: sha512-AjeFc4oX5WPPflgKfRWWJfkEk7Wu82fnj1rROPsiqFt6yElpdGFg8Srtm/4PU4rA9UiDUZlruGPgcwTMQlwq4w==}
-
   accepts@2.0.0:
     resolution: {integrity: sha512-5cvg6CtKwfgdmVqY1WIiXKc3Q1bkRqGLi+2W/6ao+6Y7gu/RCwRuAhGEzh5B4KlszSuTLgZYuqFqo5bImjNKng==}
     engines: {node: '>= 0.6'}
@@ -422,9 +413,6 @@ packages:
   is-promise@4.0.0:
     resolution: {integrity: sha512-hvpoI6korhJMnej285dSg6nu1+e6uxs7zG3BYAm5byqDsgJNWwxzM6z6iZiAgQR4TJ30JmBTOwqZUw3WlyH3AQ==}
 
-  lodash.clonedeep@4.5.0:
-    resolution: {integrity: sha512-H5ZhCF25riFd9uB5UCkVKo61m3S/xZk1x4wA6yp/L3RFP6Z/eHH1ymQcGLo7J3GMPfm0V/7m1tryHuGVxpqEBQ==}
-
   math-intrinsics@1.1.0:
     resolution: {integrity: sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==}
     engines: {node: '>= 0.4'}
@@ -471,18 +459,18 @@ packages:
     resolution: {integrity: sha512-CiyeOxFT/JZyN5m0z9PfXw4SCBJ6Sygz1Dpl0wqjlhDEGGBP1GnsUVEL0p63hoG1fcj3fHynXi9NYO4nWOL+qQ==}
     engines: {node: '>= 0.8'}
 
+  patchright-core@1.64.1:
+    resolution: {integrity: sha512-nUWuqaaUVd60qepdDPv+i5g257F8jywbzn7aKV8fPRur4dmkFLxYV/xus8f69gKAB7+S/zfdYe0zA3mJkO6+0w==}
+    engines: {node: '>=20'}
+    hasBin: true
+
+  patchright@1.64.1:
+    resolution: {integrity: sha512-uZYBmH3iofTHhUj9DvNQkdFYAY2weGJtoGIEjGJ9K0kNA/ycC4p9sx3QhioEutIzJjsAzBGKbNAaNNvf7Wyw4Q==}
+    engines: {node: '>=20'}
+    hasBin: true
+
   path-to-regexp@8.4.0:
     resolution: {integrity: sha512-PuseHIvAnz3bjrM2rGJtSgo1zjgxapTLZ7x2pjhzWwlp4SJQgK3f3iZIQwkpEnBaKz6seKBADpM4B4ySkuYypg==}
-
-  playwright-core@1.64.1:
-    resolution: {integrity: sha512-BC4s8y6SEVA6Q1rSxZTto8hI1KUI3xXlHGZgvGqP4IqPdI/a6FX9H29IDNz7vKo9l21b6LfYosScPL6M3xxyDQ==}
-    engines: {node: '>=20'}
-    hasBin: true
-
-  playwright@1.64.1:
-    resolution: {integrity: sha512-HCrVhHr5QQuwYoswEUGTb7gGp522yflbv/ST8nF4sFWGuLjQCt17Q/EubpGGSNKYn1tsTCPZxqHhHCfVURu7UA==}
-    engines: {node: '>=20'}
-    hasBin: true
 
   proxy-addr@2.0.8:
     resolution: {integrity: sha512-5nnx0yGyVUcY6t9RnWcARWtwT9F1D8O9rt08htPvnd49W1IgZtmLkhu9WfMzQj1cFxjHIO6connUNVW5k7AVyQ==}
@@ -596,9 +584,6 @@ packages:
   unpipe@1.0.0:
     resolution: {integrity: sha512-pjy2bYhSsufwWlKwPc+l3cN7+wuJlK6uz0YdJEOlQDbl6jo/YlPi4mb8agUkVC8BF7V8NuzeyPNqRksA3hztKQ==}
     engines: {node: '>= 0.8'}
-
-  user-agents@1.1.669:
-    resolution: {integrity: sha512-pbIzG+AOqCaIpySKJ4IAm1l0VyE4jMnK4y1thV8lm8PYxI+7X5uWcppOK7zY79TCKKTAnJH3/4gaVIZHsjrmJA==}
 
   vary@1.1.2:
     resolution: {integrity: sha512-BNGbWLfd0eUPabhkXUVm0j8uuvREyTh5ovRa/dyow/BqAbZJyC+5fU+IzQOzmAKzYqYRAISoRhdQr3eIZ/PXqg==}
@@ -730,8 +715,6 @@ snapshots:
     dependencies:
       '@types/http-errors': 2.0.4
       '@types/node': 22.19.8
-
-  '@types/user-agents@1.0.4': {}
 
   accepts@2.0.0:
     dependencies:
@@ -949,8 +932,6 @@ snapshots:
 
   is-promise@4.0.0: {}
 
-  lodash.clonedeep@4.5.0: {}
-
   math-intrinsics@1.1.0: {}
 
   media-typer@1.1.0: {}
@@ -981,13 +962,13 @@ snapshots:
 
   parseurl@1.3.3: {}
 
-  path-to-regexp@8.4.0: {}
+  patchright-core@1.64.1: {}
 
-  playwright-core@1.64.1: {}
-
-  playwright@1.64.1:
+  patchright@1.64.1:
     dependencies:
-      playwright-core: 1.64.1
+      patchright-core: 1.64.1
+
+  path-to-regexp@8.4.0: {}
 
   proxy-addr@2.0.8:
     dependencies:
@@ -1137,10 +1118,6 @@ snapshots:
   undici-types@6.21.0: {}
 
   unpipe@1.0.0: {}
-
-  user-agents@1.1.669:
-    dependencies:
-      lodash.clonedeep: 4.5.0
 
   vary@1.1.2: {}
 

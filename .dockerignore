@@ -1,3 +1,10 @@
-/node_modules/
-/dist/
-.env
+# Allow-list: only what the image build copies.
+*
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+!tsconfig.json
+!api.ts
+!helpers/
+helpers/*.spec.ts
+!docker-entrypoint.sh

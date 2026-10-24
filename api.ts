@@ -6,12 +6,18 @@ import {
   Route,
   Request as PlaywrightRequest,
   Page,
-} from 'playwright';
+} from 'patchright';
 import dotenv from 'dotenv';
-import UserAgent from 'user-agents';
 import { getError } from './helpers/get_error';
 import { Server } from 'proxy-chain';
 import { isInternalHost, ssrfPrepareRequest } from './helpers/ssrf';
+import {
+  Egress,
+  EgressPool,
+  parseEgressConfig,
+  startHealthChecks,
+} from './helpers/egress';
+import { HostPacer } from './helpers/pacer';
 
 dotenv.config();
 
@@ -29,9 +35,46 @@ const MAX_CONCURRENT_PAGES = Math.max(
 const ALLOW_LOCAL_WEBHOOKS =
   (process.env.ALLOW_LOCAL_WEBHOOKS || 'False').toUpperCase() === 'TRUE';
 
-const PROXY_SERVER = process.env.PROXY_SERVER || null;
-const PROXY_USERNAME = process.env.PROXY_USERNAME || null;
-const PROXY_PASSWORD = process.env.PROXY_PASSWORD || null;
+const envInt = (name: string, fallback: number): number => {
+  const v = Number.parseInt(process.env[name] ?? '', 10);
+  return Number.isFinite(v) && v >= 0 ? v : fallback;
+};
+
+// Fingerprint. Headed Chrome (under Xvfb in the image) through patchright:
+// no HeadlessChrome brand in the UA or client hints, no navigator.webdriver,
+// no CDP Runtime.enable leak, and the UA, client hints and TLS stack all
+// come from the same real browser instead of a random UA string pasted on
+// top of Chromium.
+const HEADLESS = (process.env.HEADLESS || 'False').toUpperCase() === 'TRUE';
+const BROWSER_CHANNEL = process.env.BROWSER_CHANNEL || 'chrome';
+const WINDOW_WIDTH = envInt('WINDOW_WIDTH', 1920);
+const WINDOW_HEIGHT = envInt('WINDOW_HEIGHT', 1080);
+// Unset by default: Chrome then derives navigator.languages and
+// Accept-Language from LANG ("en-US,en;q=0.9"), like a real install. An
+// explicit locale makes Playwright send the bare tag ("en-US"), which no
+// real browser does.
+const DEFAULT_LOCALE = process.env.DEFAULT_LOCALE || undefined;
+const DEFAULT_TIMEZONE = process.env.DEFAULT_TIMEZONE || undefined;
+
+// Egress: PROXY_SERVERS (a JSON list of exits, rotated per scrape) or the
+// upstream single PROXY_SERVER. When any exit is configured, scrapes never
+// leave directly: with every exit down they fail instead.
+const egressPool = new EgressPool(parseEgressConfig(process.env));
+const EGRESS_HEALTH_INTERVAL_MS = envInt('EGRESS_HEALTH_INTERVAL_MS', 15000);
+
+// Pacing: minimum gap between navigations to the same host.
+const hostPacer = new HostPacer({
+  minIntervalMs: envInt('HOST_MIN_INTERVAL_MS', 0),
+  jitterMs: envInt('HOST_JITTER_MS', 0),
+  maxWaitMs: envInt('HOST_MAX_WAIT_MS', 10000),
+});
+
+class NoEgressError extends Error {
+  constructor() {
+    super('No healthy egress proxy; refusing to connect directly');
+    this.name = 'NoEgressError';
+  }
+}
 
 class InsecureConnectionError extends Error {
   constructor(
@@ -64,31 +107,38 @@ const assertSafeTargetUrl = async (urlString: string): Promise<void> => {
   }
 };
 
-const buildUpstreamProxyUrl = (): string | undefined => {
-  if (!PROXY_SERVER) return undefined;
-  const server = PROXY_SERVER.includes('://')
-    ? PROXY_SERVER
-    : `http://${PROXY_SERVER}`;
-  const url = new URL(server);
-  if (PROXY_USERNAME) url.username = PROXY_USERNAME;
-  if (PROXY_PASSWORD) url.password = PROXY_PASSWORD;
-  return url.toString();
-};
-
-const startSSRFProxy = async (): Promise<number> => {
+const startSSRFProxy = async (upstreamProxyUrl?: string): Promise<number> => {
   const server = new Server({
     port: 0,
     host: '127.0.0.1',
     prepareRequestFunction: ssrfPrepareRequest({
       allowLocal: ALLOW_LOCAL_WEBHOOKS,
-      upstreamProxyUrl: buildUpstreamProxyUrl(),
+      upstreamProxyUrl,
     }),
   });
   await server.listen();
   return server.port;
 };
 
-let ssrfProxyPort: number;
+// The direct SSRF proxy, used only when no egress is configured.
+let directProxyPort: number | null = null;
+
+/** The exit for one scrape; throws NoEgressError when every exit is down. */
+const pickEgress = (
+  forHealthCheck = false,
+): { port: number; egress: Egress | null } => {
+  if (egressPool.size === 0) return { port: directProxyPort!, egress: null };
+  // The health check opens a context but never navigates, and must not fail
+  // (and get Chrome restarted by the liveness probe) just because the VPN is
+  // down; the egress state is reported in its body instead.
+  if (forHealthCheck) {
+    const first = egressPool.exits[0];
+    return { port: first.localPort!, egress: first };
+  }
+  const egress = egressPool.pick();
+  if (!egress || egress.localPort === undefined) throw new NoEgressError();
+  return { port: egress.localPort, egress };
+};
 
 type ContextSecurityState = {
   blockedNavigationRequestUrl: string | null;
@@ -161,16 +211,21 @@ interface UrlModel {
 let browser: Browser;
 
 const initializeBrowser = async () => {
+  // Keep the flag list short: every unusual switch is something a
+  // fingerprinting script can notice (--disable-gpu, for one, removes WebGL
+  // entirely). --no-sandbox: no user namespaces in the pod. /dev/shm is 64 MiB
+  // in a pod, hence --disable-dev-shm-usage. There is no GPU: without
+  // --enable-unsafe-swiftshader Chrome refuses software WebGL, and a browser
+  // with no WebGL at all stands out more than one rendering it in software.
   browser = await chromium.launch({
-    headless: true,
+    channel: BROWSER_CHANNEL,
+    headless: HEADLESS,
     args: [
       '--no-sandbox',
-      '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
-      '--disable-accelerated-2d-canvas',
       '--no-first-run',
-      '--no-zygote',
-      '--disable-gpu',
+      '--enable-unsafe-swiftshader',
+      `--window-size=${WINDOW_WIDTH},${WINDOW_HEIGHT}`,
     ],
   });
 };
@@ -178,25 +233,36 @@ const initializeBrowser = async () => {
 const createContext = async (
   skipTlsVerification: boolean = false,
   userAgentOverride?: string,
+  forHealthCheck = false,
 ): Promise<{
   context: BrowserContext;
   securityState: ContextSecurityState;
+  egress: Egress | null;
 }> => {
-  const userAgent = userAgentOverride || new UserAgent().toString();
-  const viewport = { width: 1280, height: 800 };
   const securityState: ContextSecurityState = {
     blockedNavigationRequestUrl: null,
   };
+  const { port, egress } = pickEgress(forHealthCheck);
 
   const contextOptions: any = {
-    userAgent,
-    viewport,
+    // Headed: the page gets the real window size. Headless has no window,
+    // so give it the same size explicitly.
+    viewport: HEADLESS ? { width: WINDOW_WIDTH, height: WINDOW_HEIGHT } : null,
+    // The browser's own UA unless the caller sets one: a made-up UA that
+    // disagrees with the client hints and TLS is worse than none.
+    ...(userAgentOverride && { userAgent: userAgentOverride }),
+    ...((egress?.locale ?? DEFAULT_LOCALE) && {
+      locale: egress?.locale ?? DEFAULT_LOCALE,
+    }),
+    ...((egress?.timezone ?? DEFAULT_TIMEZONE) && {
+      timezoneId: egress?.timezone ?? DEFAULT_TIMEZONE,
+    }),
     ignoreHTTPSErrors: skipTlsVerification,
     serviceWorkers: 'block',
   };
 
   contextOptions.proxy = {
-    server: `http://127.0.0.1:${ssrfProxyPort}`,
+    server: `http://127.0.0.1:${port}`,
   };
 
   const newContext = await browser.newContext(contextOptions);
@@ -238,7 +304,7 @@ const createContext = async (
     },
   );
 
-  return { context: newContext, securityState };
+  return { context: newContext, securityState, egress };
 };
 
 const shutdownBrowser = async () => {
@@ -265,8 +331,10 @@ const scrapePage = async (
   checkSelector: string | undefined,
   securityState: ContextSecurityState,
 ) => {
+  const waited = await hostPacer.wait(new URL(url).hostname);
   console.log(
-    `Navigating to ${url} with waitUntil: ${waitUntil} and timeout: ${timeout}ms`,
+    `Navigating to ${url} with waitUntil: ${waitUntil} and timeout: ${timeout}ms` +
+      (waited > 0 ? ` (paced ${waited}ms)` : ''),
   );
   let response;
   try {
@@ -330,7 +398,11 @@ app.get('/health', async (req: Request, res: Response) => {
       await initializeBrowser();
     }
 
-    const { context: testContext } = await createContext();
+    const { context: testContext } = await createContext(
+      false,
+      undefined,
+      true,
+    );
     const testPage = await testContext.newPage();
     await testPage.close();
     await testContext.close();
@@ -339,6 +411,8 @@ app.get('/health', async (req: Request, res: Response) => {
       status: 'healthy',
       maxConcurrentPages: MAX_CONCURRENT_PAGES,
       activePages: MAX_CONCURRENT_PAGES - pageSemaphore.getAvailablePermits(),
+      headless: HEADLESS,
+      egress: egressPool.size === 0 ? 'direct' : egressPool.status(),
     });
   } catch (error) {
     console.error('Health check failed:', error);
@@ -389,12 +463,6 @@ app.post('/scrape', async (req: Request, res: Response) => {
     throw error;
   }
 
-  if (!PROXY_SERVER) {
-    console.warn(
-      '⚠️ WARNING: No proxy server provided. Your IP address may be blocked.',
-    );
-  }
-
   if (!browser) {
     await initializeBrowser();
   }
@@ -421,6 +489,9 @@ app.post('/scrape', async (req: Request, res: Response) => {
     );
     requestContext = contextBundle.context;
     securityState = contextBundle.securityState;
+    if (contextBundle.egress) {
+      console.log(`Egress: ${contextBundle.egress.name}`);
+    }
     page = await requestContext.newPage();
 
     if (headers) {
@@ -528,6 +599,10 @@ app.post('/scrape', async (req: Request, res: Response) => {
         pageError: error.message,
       });
     }
+    if (error instanceof NoEgressError) {
+      console.error(error.message);
+      return res.status(503).json({ error: error.message });
+    }
     console.error('Scrape error:', error);
     res
       .status(500)
@@ -540,7 +615,26 @@ app.post('/scrape', async (req: Request, res: Response) => {
 });
 
 const start = async () => {
-  ssrfProxyPort = await startSSRFProxy();
+  if (egressPool.size === 0) {
+    directProxyPort = await startSSRFProxy();
+    console.warn(
+      '⚠️ WARNING: No proxy server provided. Your IP address may be blocked.',
+    );
+  } else {
+    for (const exit of egressPool.exits) {
+      exit.localPort = await startSSRFProxy(exit.url);
+    }
+    startHealthChecks(egressPool, EGRESS_HEALTH_INTERVAL_MS);
+    console.log(
+      `Egress rotation over ${egressPool.size} exit(s): ` +
+        egressPool.exits.map((e) => e.name).join(', '),
+    );
+  }
+  console.log(
+    `Browser: channel=${BROWSER_CHANNEL} headless=${HEADLESS} ` +
+      `window=${WINDOW_WIDTH}x${WINDOW_HEIGHT}; host pacing ` +
+      (hostPacer.enabled ? 'on' : 'off'),
+  );
   await initializeBrowser();
   app.listen(port, () => {
     console.log(`Server is running on port ${port}`);
